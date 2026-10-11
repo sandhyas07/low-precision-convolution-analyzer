@@ -4,10 +4,9 @@ import matplotlib.pyplot as plt
 import time
 import csv
 
-# Low-Precision Convolution Analyzer
-# Compare FP32 and FP16 numerical precision
 
 def convolution(image, kernel, dtype):
+    """Perform valid 2D convolution-style filtering at a chosen precision."""
     image = image.astype(dtype)
     kernel = kernel.astype(dtype)
 
@@ -22,95 +21,110 @@ def convolution(image, kernel, dtype):
     for i in range(height - kh + 1):
         for j in range(width - kw + 1):
             region = image[i:i + kh, j:j + kw]
-            # Explicitly round products and accumulation
+
+            # Round products and accumulation to the chosen precision
             products = (region * kernel).astype(dtype)
-            total = np.sum(products, dtype=dtype)
-            output[i, j] = total
+            output[i, j] = np.sum(products, dtype=dtype)
 
     return output
+
+
+def measure_time(image, kernel, dtype, repeats=10):
+    """Measure average execution time over repeated runs."""
+    # Warm-up run
+    convolution(image, kernel, dtype)
+
+    timings = []
+
+    for _ in range(repeats):
+        start = time.perf_counter()
+        convolution(image, kernel, dtype)
+        timings.append(time.perf_counter() - start)
+
+    return float(np.median(timings))
 
 
 def main():
     np.random.seed(42)
 
-    # Create a sample 128 x 128 image and a 3 x 3 kernel
-    image = np.random.rand(128, 128).astype(np.float32)
+    # Fixed input makes comparisons reproducible
+    image = np.random.rand(128, 128).astype(np.float64)
+
     kernel = np.array([
         [1, 0, -1],
         [1, 0, -1],
         [1, 0, -1]
-    ], dtype=np.float32)
+    ], dtype=np.float64)
 
-    # Use FP32 as the reference result
-    reference = convolution(image, kernel, np.float32)
+    # FP64 is the higher-precision reference
+    reference = convolution(image, kernel, np.float64).astype(np.float64)
+
+    precision_levels = [
+        ("FP16", np.float16),
+        ("FP32", np.float32),
+        ("FP64", np.float64)
+    ]
 
     results = []
-    outputs = {}
 
-    for name, dtype in [
-        ("FP32", np.float32),
-        ("FP16", np.float16)
-    ]:
-        # Repeat the operation to obtain a more stable timing
-        start = time.perf_counter()
-        for _ in range(5):
-            output = convolution(image, kernel, dtype)
-        elapsed = (time.perf_counter() - start) / 5
+    for name, dtype in precision_levels:
+        output = convolution(image, kernel, dtype).astype(np.float64)
 
-        # Compare each result against the FP32 reference
-        difference = output.astype(np.float64) - reference.astype(np.float64)
-        absolute_error = np.abs(difference)
+        difference = np.abs(output - reference)
+        max_error = float(np.max(difference))
+        mean_error = float(np.mean(difference))
 
-        max_error = float(np.max(absolute_error))
-        mean_error = float(np.mean(absolute_error))
+        elapsed = measure_time(image, kernel, dtype)
 
         results.append({
             "Precision": name,
-            "Time (seconds)": elapsed,
+            "Median Time (seconds)": elapsed,
             "Maximum Absolute Error": max_error,
             "Mean Absolute Error": mean_error
         })
-        outputs[name] = output
 
-    # Display the results
     print("\nLOW-PRECISION CONVOLUTION ANALYSIS")
-    print("-" * 72)
-    print(f"{'Precision':<12}{'Time (s)':<15}"
-          f"{'Maximum Error':<20}{'Mean Error':<15}")
+    print("=" * 88)
+    print(
+        f"{'Precision':<12}"
+        f"{'Median Time (s)':<20}"
+        f"{'Maximum Error':<22}"
+        f"{'Mean Error':<22}"
+    )
 
     for row in results:
         print(
             f"{row['Precision']:<12}"
-            f"{row['Time (seconds)']:<15.6f}"
-            f"{row['Maximum Absolute Error']:<20.8f}"
-            f"{row['Mean Absolute Error']:<15.8f}"
+            f"{row['Median Time (seconds)']:<20.6f}"
+            f"{row['Maximum Absolute Error']:<22.8f}"
+            f"{row['Mean Absolute Error']:<22.8f}"
         )
 
-    # Save the measurements to a CSV file
     with open("results.csv", "w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=results[0].keys())
         writer.writeheader()
         writer.writerows(results)
 
-    # Plot numerical error and execution time
     names = [row["Precision"] for row in results]
-    times = [row["Time (seconds)"] for row in results]
+    times = [row["Median Time (seconds)"] for row in results]
     errors = [row["Mean Absolute Error"] for row in results]
 
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    fig, axes = plt.subplots(1, 2, figsize=(11, 5))
 
     axes[0].bar(names, times)
-    axes[0].set_title("Convolution Execution Time")
-    axes[0].set_ylabel("Average Time (seconds)")
+    axes[0].set_title("Median Convolution Execution Time")
+    axes[0].set_ylabel("Time (seconds)")
+    axes[0].set_xlabel("Numerical Precision")
 
     axes[1].bar(names, errors)
-    axes[1].set_title("Mean Absolute Error")
-    axes[1].set_ylabel("Error compared with FP32")
+    axes[1].set_title("Mean Absolute Error vs FP64")
+    axes[1].set_ylabel("Absolute Error")
+    axes[1].set_xlabel("Numerical Precision")
 
     plt.tight_layout()
     plt.savefig("comparison_graph.png", dpi=150)
-    print("\nFiles saved: results.csv and comparison_graph.png")
 
+    print("\nUpdated results.csv and comparison_graph.png")
     plt.show()
 
 
